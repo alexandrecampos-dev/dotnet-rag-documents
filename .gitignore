@@ -1,0 +1,23 @@
+## .NET
+[Dd]ebug/
+[Rr]elease/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.db
+*.db-shm
+*.db-wal
+**/packages/
+artifacts/
+project.lock.json
+
+# Secrets — never commit
+appsettings.*.local.json
+secrets.json
+.env
