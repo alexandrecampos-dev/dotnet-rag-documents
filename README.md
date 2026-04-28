@@ -1,75 +1,72 @@
 # dotnet-rag-documents
 
-A production-ready **Retrieval-Augmented Generation (RAG)** pipeline built with **.NET 9** — document ingestion, vector storage in PostgreSQL with pgvector, and LLM-generated answers with cited sources.
+Pipeline **RAG (Retrieval-Augmented Generation)** completo em **.NET 9** — ingere documentos, armazena vetores no PostgreSQL com pgvector e responde perguntas com fontes citadas.
 
 [![.NET](https://img.shields.io/badge/.NET-9.0-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-316192?style=flat-square&logo=postgresql)](https://github.com/pgvector/pgvector)
-[![Azure OpenAI](https://img.shields.io/badge/Azure_OpenAI-compatible-0078D4?style=flat-square&logo=microsoftazure)](https://azure.microsoft.com/products/ai-services/openai-service)
-[![Ollama](https://img.shields.io/badge/Ollama-compatible-000000?style=flat-square)](https://ollama.com)
-[![Architecture](https://img.shields.io/badge/Architecture-Clean_Architecture-00C7B7?style=flat-square)]()
-[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+[![Azure OpenAI](https://img.shields.io/badge/Azure_OpenAI-compatível-0078D4?style=flat-square&logo=microsoftazure)](https://azure.microsoft.com/products/ai-services/openai-service)
+[![Ollama](https://img.shields.io/badge/Ollama-compatível-000000?style=flat-square)](https://ollama.com)
+[![Licença](https://img.shields.io/badge/Licença-MIT-green?style=flat-square)](LICENSE)
 
 ---
 
-## What This Project Demonstrates
+## O que este projeto demonstra
 
-Most RAG examples are written in Python. This project shows the same pipeline implemented in idiomatic .NET 9:
+A maioria dos exemplos de RAG está em Python. Este projeto implementa o mesmo pipeline em **.NET idiomático** — os mesmos padrões usados em sistemas de produção, sem frameworks de orquestração de IA como LangChain.
 
-- Document ingestion with sliding-window chunking and configurable overlap
-- Embedding generation via Azure OpenAI (`text-embedding-ada-002`) or Ollama (`nomic-embed-text`) — switched by config, no code change
-- Vector storage and cosine similarity search using PostgreSQL + pgvector — no extra infrastructure required if you already run Postgres
-- Answer generation with source attribution via Azure OpenAI GPT-4o
-- Clean Architecture with CQRS and MediatR — the same patterns used in production .NET systems
+| Característica | Detalhe |
+|---------------|---------|
+| Chunking | Janela deslizante com sobreposição configurável |
+| Embeddings | Azure OpenAI (`text-embedding-ada-002`) ou Ollama (`nomic-embed-text`) — troca por configuração, sem alterar código |
+| Armazenamento vetorial | PostgreSQL + pgvector — sem infraestrutura adicional se você já usa Postgres |
+| Geração de resposta | Azure OpenAI GPT-4o com fontes citadas |
+| Arquitetura | Clean Architecture + CQRS com MediatR |
 
 ---
 
-## Architecture
+## Arquitetura
 
 ```
 dotnet-rag-documents/
 └── src/
-    ├── RagDocuments.Domain/          # Entities: Document, DocumentChunk
-    ├── RagDocuments.Application/     # CQRS handlers, service interfaces
+    ├── RagDocuments.Domain/          # Entidades: Document, DocumentChunk
+    ├── RagDocuments.Application/     # Handlers CQRS, interfaces de serviço
     ├── RagDocuments.Infrastructure/  # EF Core, pgvector, Azure OpenAI, Ollama
-    └── RagDocuments.API/             # ASP.NET Core minimal API, 3 endpoints
+    └── RagDocuments.API/             # ASP.NET Core minimal API — 3 endpoints
 ```
 
-Dependency rule: `API -> Application -> Domain <- Infrastructure`
+Regra de dependência: `API -> Application -> Domain <- Infrastructure`
 
-### RAG Pipeline
+### Fluxo do pipeline
 
 ```
-POST /documents
-  1. Receive document content
-  2. Split into overlapping chunks (sliding window)
-  3. Generate embeddings for each chunk (batch)
-  4. Persist document + chunks with embeddings in pgvector
+POST /documentos          — Ingestão
+  1. Recebe o conteúdo do documento
+  2. Divide em chunks com sobreposição (sliding window)
+  3. Gera embeddings em lote
+  4. Persiste documento + chunks + vetores no pgvector
 
-POST /query
-  1. Embed the question
-  2. Run cosine similarity search against all chunks
-  3. Build a context window from the top-K results
-  4. Send context + question to the LLM
-  5. Return answer + cited sources
+POST /consulta            — Consulta RAG
+  1. Gera embedding da pergunta
+  2. Busca por similaridade de cosseno nos chunks (top-K)
+  3. Monta janela de contexto com os resultados
+  4. Envia contexto + pergunta para o LLM
+  5. Retorna resposta + fontes citadas
 ```
 
-### Embedding Providers
+### Provedores de embedding
 
-| Provider | Model | Dimensions | Config value |
-|----------|-------|-----------|--------------|
+| Provedor | Modelo | Dimensões | Valor de config |
+|----------|--------|-----------|----------------|
 | Azure OpenAI | text-embedding-ada-002 | 1536 | `AzureOpenAI` |
 | Ollama (local) | nomic-embed-text | 768 | `Ollama` |
 
-Switch providers by changing `AI:EmbeddingProvider` in `appsettings.json`. No code change required.
-
 ---
 
-## Prerequisites
+## Pré-requisitos
 
 - [.NET 9 SDK](https://dotnet.microsoft.com/download)
-- PostgreSQL with pgvector extension installed
-
-Enable pgvector in your database:
+- PostgreSQL com a extensão pgvector instalada
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -77,168 +74,133 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 ---
 
-## Getting Started
+## Início rápido
 
 ```bash
+# 1. Clone o repositório
 git clone https://github.com/alexandrecampos-dev/dotnet-rag-documents.git
 cd dotnet-rag-documents
+
+# 2. Configure a connection string e o provedor de IA em:
+#    src/RagDocuments.API/appsettings.json
+
+# 3. Execute — as migrations são aplicadas automaticamente na inicialização
+cd src/RagDocuments.API && dotnet run
 ```
 
-Configure your connection string and AI provider in `src/RagDocuments.API/appsettings.json`:
-
-```json
-{
-  "ConnectionStrings": {
-    "DefaultConnection": "Host=localhost;Database=rag_documents;Username=postgres;Password=your_password"
-  },
-  "AI": {
-    "EmbeddingProvider": "AzureOpenAI"
-  },
-  "AzureOpenAI": {
-    "Endpoint": "https://your-resource.openai.azure.com/",
-    "ApiKey": "your-api-key",
-    "EmbeddingDeployment": "text-embedding-ada-002",
-    "ChatDeployment": "gpt-4o"
-  }
-}
-```
-
-Run:
-
-```bash
-dotnet restore
-cd src/RagDocuments.API
-dotnet run
-```
-
-The API runs migrations automatically on startup. OpenAPI available at `http://localhost:5000/openapi/v1.json`.
+API disponível em `http://localhost:5000`  
+OpenAPI em `http://localhost:5000/openapi/v1.json`
 
 ---
 
-## API Reference
+## Referência da API
 
-### Ingest a document
+### Ingerir um documento
 
 ```http
-POST /documents
+POST /documentos
 Content-Type: application/json
 
 {
-  "name": "Clean Architecture",
-  "source": "Robert C. Martin, 2017",
-  "contentType": "text/plain",
-  "content": "The goal of software architecture is to minimize the human resources required to build and maintain the required system..."
+  "nome": "Clean Architecture",
+  "fonte": "Robert C. Martin, 2017",
+  "tipoDe": "text/plain",
+  "conteudo": "O objetivo da arquitetura de software é minimizar os recursos humanos necessários para construir e manter o sistema..."
 }
 ```
 
-Response `201 Created`:
+Resposta `201 Created`:
 
 ```json
 {
-  "documentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "chunksCreated": 12
+  "documentoId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "chunksGerados": 12
 }
 ```
 
-### Query your documents
+### Consultar os documentos
 
 ```http
-POST /query
+POST /consulta
 Content-Type: application/json
 
 {
-  "question": "What is the main goal of software architecture?",
+  "pergunta": "Qual é o principal objetivo da arquitetura de software?",
   "topK": 5
 }
 ```
 
-Response `200 OK`:
+Resposta `200 OK`:
 
 ```json
 {
-  "answer": "According to the provided context, the main goal of software architecture is to minimize the human resources required to build and maintain the required system.",
-  "sources": [
+  "resposta": "De acordo com o contexto fornecido, o principal objetivo da arquitetura de software é minimizar os recursos humanos necessários para construir e manter o sistema.",
+  "fontes": [
     {
-      "documentId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-      "documentName": "Clean Architecture",
-      "excerpt": "The goal of software architecture is to minimize the human resources required...",
+      "documentoId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "nomeDocumento": "Clean Architecture",
+      "trecho": "O objetivo da arquitetura de software é minimizar os recursos humanos...",
       "score": 0.97
     }
   ]
 }
 ```
 
-### List ingested documents
+### Listar documentos ingeridos
 
 ```http
-GET /documents
+GET /documentos
 ```
 
 ---
 
-## Configuration Reference
+## Configuração
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `AI:EmbeddingProvider` | `AzureOpenAI` | `AzureOpenAI` or `Ollama` |
-| `AzureOpenAI:EmbeddingDeployment` | `text-embedding-ada-002` | Azure OpenAI embedding model deployment name |
-| `AzureOpenAI:ChatDeployment` | `gpt-4o` | Azure OpenAI chat model deployment name |
-| `AzureOpenAI:EmbeddingDimensions` | `1536` | Must match the model output |
-| `Ollama:BaseUrl` | `http://localhost:11434` | Local Ollama instance |
-| `Ollama:EmbeddingModel` | `nomic-embed-text` | Ollama model for embeddings |
-| `Ollama:EmbeddingDimensions` | `768` | Must match the model output |
-| `Chunking:ChunkSize` | `300` | Words per chunk |
-| `Chunking:OverlapSize` | `50` | Words shared between consecutive chunks |
+| Chave | Padrão | Descrição |
+|-------|--------|-----------|
+| `AI:EmbeddingProvider` | `AzureOpenAI` | `AzureOpenAI` ou `Ollama` |
+| `AzureOpenAI:EmbeddingDeployment` | `text-embedding-ada-002` | Nome do deployment de embeddings no Azure |
+| `AzureOpenAI:ChatDeployment` | `gpt-4o` | Nome do deployment de chat no Azure |
+| `AzureOpenAI:EmbeddingDimensions` | `1536` | Deve corresponder ao modelo utilizado |
+| `Ollama:BaseUrl` | `http://localhost:11434` | Instância local do Ollama |
+| `Ollama:EmbeddingModel` | `nomic-embed-text` | Modelo de embeddings no Ollama |
+| `Ollama:EmbeddingDimensions` | `768` | Deve corresponder ao modelo utilizado |
+| `Chunking:ChunkSize` | `300` | Palavras por chunk |
+| `Chunking:OverlapSize` | `50` | Palavras compartilhadas entre chunks consecutivos |
 
----
-
-## Running with Ollama (local, no API key required)
-
-1. Install [Ollama](https://ollama.com) and pull the required models:
+### Executando com Ollama (local, sem chave de API)
 
 ```bash
 ollama pull nomic-embed-text
 ollama pull llama3
 ```
 
-2. Update `appsettings.json`:
+Em `appsettings.json`, defina:
 
 ```json
 {
-  "AI": { "EmbeddingProvider": "Ollama" },
-  "AzureOpenAI": { "EmbeddingDimensions": 768 }
+  "AI": { "EmbeddingProvider": "Ollama" }
 }
 ```
 
-Note: when switching embedding providers, re-ingest your documents — embeddings are not interchangeable across models.
+> Ao trocar de provedor de embeddings, re-ingira os documentos. Vetores de modelos diferentes não são compatíveis entre si.
 
 ---
 
-## Tech Stack
+## Stack
 
-| Technology | Purpose |
-|-----------|---------|
+| Tecnologia | Finalidade |
+|-----------|-----------|
 | .NET 9 | Runtime |
-| ASP.NET Core | HTTP host, minimal API |
-| MediatR | CQRS mediator pipeline |
-| Entity Framework Core | ORM, migrations |
-| Npgsql + pgvector | PostgreSQL vector operations |
-| Azure.AI.OpenAI | Embeddings and chat completions |
-| FluentValidation | Input validation |
+| ASP.NET Core | Host HTTP, minimal API |
+| MediatR | Pipeline CQRS |
+| Entity Framework Core | ORM e migrations |
+| Npgsql + pgvector | Operações vetoriais no PostgreSQL |
+| Azure.AI.OpenAI | Embeddings e completions |
 
 ---
 
-## References
-
-- [pgvector](https://github.com/pgvector/pgvector)
-- [Pgvector.EntityFrameworkCore](https://github.com/pgvector/pgvector-dotnet)
-- [Azure OpenAI Service](https://learn.microsoft.com/azure/ai-services/openai/)
-- [Ollama](https://ollama.com)
-- [Clean Architecture](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-Clean-Architecture.html)
-
----
-
-## Author
+## Autor
 
 **Alexandre Campos** — Software Engineer & AI Engineer  
 [LinkedIn](https://www.linkedin.com/in/alexandre-campos-3725b18b/) · [GitHub](https://github.com/alexandrecampos-dev)
