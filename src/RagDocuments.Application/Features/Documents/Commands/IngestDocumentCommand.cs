@@ -26,6 +26,11 @@ public class IngestDocumentCommandHandler : IRequestHandler<IngestDocumentComman
 
     public async Task<IngestDocumentResult> Handle(IngestDocumentCommand request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.Name))
+            throw new ArgumentException("Document name is required.", nameof(request.Name));
+        if (string.IsNullOrWhiteSpace(request.Content))
+            throw new ArgumentException("Document content is required.", nameof(request.Content));
+
         var document = new Document(request.Name, request.Source, request.ContentType);
         await _context.Documents.AddAsync(document, cancellationToken);
 

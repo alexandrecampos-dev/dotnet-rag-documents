@@ -31,6 +31,9 @@ public class AzureOpenAILlmService : ILlmService
         };
 
         var response = await _client.CompleteChatAsync(messages, cancellationToken: cancellationToken);
-        return response.Value.Content[0].Text;
+        var content = response.Value.Content;
+        if (content is not { Count: > 0 })
+            throw new InvalidOperationException("Empty response from Azure OpenAI.");
+        return content[0].Text;
     }
 }

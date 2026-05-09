@@ -1,14 +1,23 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Pgvector;
 using Pgvector.EntityFrameworkCore;
 using RagDocuments.Application.Common.Interfaces;
 using RagDocuments.Domain.Entities;
+using RagDocuments.Infrastructure.Settings;
 
 namespace RagDocuments.Infrastructure.Persistence;
 
 public class ApplicationDbContext : DbContext, IApplicationDbContext
 {
-    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : base(options) { }
+    private readonly int _vectorDimensions;
+
+    public ApplicationDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        IOptions<VectorDimensionOptions> vectorOptions) : base(options)
+    {
+        _vectorDimensions = vectorOptions.Value.Dimensions;
+    }
 
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentChunk> DocumentChunks => Set<DocumentChunk>();
@@ -36,7 +45,7 @@ public class ApplicationDbContext : DbContext, IApplicationDbContext
             entity.HasKey(c => c.Id);
             entity.Property(c => c.Content).IsRequired();
             entity.Property(c => c.Embedding)
-                  .HasColumnType("vector(1536)")
+                  .HasColumnType($"vector({_vectorDimensions})")
                   .HasConversion(
                       v => new Vector(v),
                       v => v.ToArray());

@@ -27,11 +27,15 @@ public class QueryDocumentsCommandHandler : IRequestHandler<QueryDocumentsComman
 
     public async Task<QueryDocumentsResult> Handle(QueryDocumentsCommand request, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(request.Question))
+            throw new ArgumentException("Question is required.", nameof(request.Question));
+
+        var topK = Math.Clamp(request.TopK, 1, 20);
         var queryEmbedding = await _embeddingService.GenerateAsync(request.Question, cancellationToken);
 
-        var similarChunks = await _vectorSearch.SearchAsync(queryEmbedding, request.TopK, cancellationToken);
+        var similarChunks = await _vectorSearch.SearchAsync(queryEmbedding, topK, cancellationToken);
 
-        if (!similarChunks.Any())
+        if (similarChunks.Count == 0)
         {
             return new QueryDocumentsResult(
                 "No relevant documents found for the given question.",

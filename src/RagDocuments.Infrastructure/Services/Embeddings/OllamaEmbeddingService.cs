@@ -32,12 +32,8 @@ public class OllamaEmbeddingService : IEmbeddingService
 
     public async Task<IReadOnlyList<float[]>> GenerateBatchAsync(IEnumerable<string> texts, CancellationToken cancellationToken = default)
     {
-        var results = new List<float[]>();
-        foreach (var text in texts)
-        {
-            results.Add(await GenerateAsync(text, cancellationToken));
-        }
-        return results;
+        var tasks = texts.Select(text => GenerateAsync(text, cancellationToken));
+        return await Task.WhenAll(tasks);
     }
 
     private record OllamaEmbeddingResponse(

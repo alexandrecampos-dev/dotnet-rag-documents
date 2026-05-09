@@ -1,6 +1,31 @@
 @RagDocuments.API_HostAddress = http://localhost:5240
 
-GET {{RagDocuments.API_HostAddress}}/weatherforecast/
+### List all ingested documents
+GET {{RagDocuments.API_HostAddress}}/documents
 Accept: application/json
+
+###
+
+### Ingest a document
+POST {{RagDocuments.API_HostAddress}}/documents
+Content-Type: application/json
+
+{
+  "name": "Clean Architecture",
+  "source": "Robert C. Martin, 2017",
+  "contentType": "text/plain",
+  "content": "The goal of software architecture is to minimize the human resources required to build and maintain the required system. Clean Architecture separates concerns into layers: Entities, Use Cases, Interface Adapters, and Frameworks & Drivers. Dependencies always point inward — outer layers depend on inner layers, never the reverse."
+}
+
+###
+
+### Query documents with RAG
+POST {{RagDocuments.API_HostAddress}}/query
+Content-Type: application/json
+
+{
+  "question": "What is the main goal of software architecture?",
+  "topK": 5
+}
 
 ###

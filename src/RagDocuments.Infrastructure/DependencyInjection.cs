@@ -25,6 +25,23 @@ public static class DependencyInjection
         services.Configure<ChunkingSettings>(
             configuration.GetSection(ChunkingSettings.SectionName));
 
+        var provider = configuration.GetValue<string>("AI:EmbeddingProvider") ?? "AzureOpenAI";
+
+        if (provider.Equals("Ollama", StringComparison.OrdinalIgnoreCase))
+        {
+            var dimensions = configuration.GetValue<int>("Ollama:EmbeddingDimensions", 768);
+            services.Configure<VectorDimensionOptions>(o => o.Dimensions = dimensions);
+            services.AddHttpClient<IEmbeddingService, OllamaEmbeddingService>();
+            services.AddHttpClient<ILlmService, OllamaLlmService>();
+        }
+        else
+        {
+            var dimensions = configuration.GetValue<int>("AzureOpenAI:EmbeddingDimensions", 1536);
+            services.Configure<VectorDimensionOptions>(o => o.Dimensions = dimensions);
+            services.AddScoped<IEmbeddingService, AzureOpenAIEmbeddingService>();
+            services.AddScoped<ILlmService, AzureOpenAILlmService>();
+        }
+
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseNpgsql(
                 configuration.GetConnectionString("DefaultConnection"),
@@ -35,18 +52,6 @@ public static class DependencyInjection
 
         services.AddScoped<IVectorSearchService, VectorSearchService>();
         services.AddScoped<ITextChunker, TextChunker>();
-        services.AddScoped<ILlmService, AzureOpenAILlmService>();
-
-        var provider = configuration.GetValue<string>("AI:EmbeddingProvider") ?? "AzureOpenAI";
-
-        if (provider.Equals("Ollama", StringComparison.OrdinalIgnoreCase))
-        {
-            services.AddHttpClient<IEmbeddingService, OllamaEmbeddingService>();
-        }
-        else
-        {
-            services.AddScoped<IEmbeddingService, AzureOpenAIEmbeddingService>();
-        }
 
         return services;
     }
