@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "release/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore RagDocuments.slnx
+
+      - name: Build
+        run: dotnet build RagDocuments.slnx --no-restore -c Release
+
+      # Os testes de integração sobem PostgreSQL + pgvector com Testcontainers (Docker já vem no runner).
+      - name: Test
+        run: dotnet test --solution RagDocuments.slnx --no-build -c Release

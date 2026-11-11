@@ -1,0 +1,41 @@
+# Sobe o que o pipeline precisa para rodar 100% local, sem chave de API:
+#   docker compose up -d
+# PostgreSQL com pgvector na porta 5433 e Ollama na 11434. O serviço "modelos" baixa
+# o modelo de embedding e o de geração na primeira vez (uns 2 GB) e termina.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ollama:
+    image: ollama/ollama:0.40.16
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  modelos:
+    image: ollama/ollama:0.40.16
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "sleep 3 && ollama pull nomic-embed-text && ollama pull qwen2.5:3b"]
+    restart: "no"
+
+volumes:
+  pgdata:
+  ollama:

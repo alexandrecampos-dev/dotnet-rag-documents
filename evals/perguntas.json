@@ -1,0 +1,16 @@
+[
+  { "pergunta": "Em quantas partes posso dividir minhas férias?", "documentoEsperado": "politica-de-ferias.md" },
+  { "pergunta": "Com quanta antecedência preciso pedir férias?", "documentoEsperado": "politica-de-ferias.md" },
+  { "pergunta": "Posso vender parte das minhas férias?", "documentoEsperado": "politica-de-ferias.md" },
+  { "pergunta": "Qual o limite diário de alimentação em viagem nacional?", "documentoEsperado": "reembolso-de-despesas.md" },
+  { "pergunta": "Quanto recebo por quilômetro usando meu carro?", "documentoEsperado": "reembolso-de-despesas.md" },
+  { "pergunta": "Qual o prazo para prestar contas de uma viagem?", "documentoEsperado": "reembolso-de-despesas.md" },
+  { "pergunta": "Quantos dias por semana posso trabalhar de casa?", "documentoEsperado": "trabalho-remoto.md" },
+  { "pergunta": "Qual o valor do auxílio home office?", "documentoEsperado": "trabalho-remoto.md" },
+  { "pergunta": "Qual o tamanho mínimo de senha?", "documentoEsperado": "seguranca-da-informacao.md" },
+  { "pergunta": "O que significa a classificação CONF-3?", "documentoEsperado": "seguranca-da-informacao.md" },
+  { "pergunta": "Recebi um e-mail de phishing, o que faço?", "documentoEsperado": "seguranca-da-informacao.md" },
+  { "pergunta": "Qual a cotação do dólar hoje?", "documentoEsperado": null },
+  { "pergunta": "Quem ganhou a Copa do Mundo de 2002?", "documentoEsperado": null },
+  { "pergunta": "Como faço uma receita de bolo de cenoura?", "documentoEsperado": null }
+]

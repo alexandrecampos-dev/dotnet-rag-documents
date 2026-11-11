@@ -1,8 +1,9 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/RagDocuments.API/RagDocuments.API.csproj" />
-    <Project Path="src/RagDocuments.Application/RagDocuments.Application.csproj" />
-    <Project Path="src/RagDocuments.Domain/RagDocuments.Domain.csproj" />
-    <Project Path="src/RagDocuments.Infrastructure/RagDocuments.Infrastructure.csproj" />
+    <Project Path="src/RagDocuments.Core/RagDocuments.Core.csproj" />
+    <Project Path="src/RagDocuments.Api/RagDocuments.Api.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RagDocuments.Tests/RagDocuments.Tests.csproj" />
   </Folder>
 </Solution>
