@@ -14,8 +14,10 @@ public sealed record Trecho(int Ordem, string? Secao, string Conteudo)
 
 /// <summary>
 /// Divide o documento respeitando a estrutura: primeiro por seção (títulos Markdown), depois por
-/// parágrafo, e só quebra parágrafo longo em fronteira de frase. A 1.0 cortava a cada N palavras,
-/// no meio da frase e sem saber de que seção era o texto.
+/// parágrafo, e só quebra parágrafo longo em fronteira de frase. Texto sem pontuação (lista, tabela,
+/// código, tudo em minúsculas) cai no último recurso: corte por palavra e, se preciso, por caractere.
+/// Nenhum trecho passa de TamanhoDoTrecho + Sobreposicao. A 1.0 cortava a cada N palavras, no meio
+/// da frase e sem saber de que seção era o texto.
 /// </summary>
 public static partial class Fatiador
 {
@@ -46,14 +48,22 @@ public static partial class Fatiador
         return trechos;
     }
 
-    /// <summary>Seções delimitadas por títulos Markdown; o texto antes do primeiro título fica sem seção.</summary>
+    /// <summary>
+    /// Seções delimitadas por títulos Markdown; o texto antes do primeiro título fica sem seção.
+    /// Linhas com # dentro de bloco de código (comentário de shell ou Python) não são título.
+    /// </summary>
     private static IEnumerable<(string? Secao, string Corpo)> Secoes(string texto)
     {
         string? titulo = null;
         var corpo = new StringBuilder();
+        var dentroDeCodigo = false;
         foreach (var linha in texto.Split('\n'))
         {
-            var m = Titulo().Match(linha);
+            var aparada = linha.TrimStart();
+            if (aparada.StartsWith("```", StringComparison.Ordinal) || aparada.StartsWith("~~~", StringComparison.Ordinal))
+                dentroDeCodigo = !dentroDeCodigo;
+
+            var m = dentroDeCodigo ? Match.Empty : Titulo().Match(linha);
             if (m.Success)
             {
                 if (corpo.ToString().Trim().Length > 0)
@@ -70,7 +80,7 @@ public static partial class Fatiador
             yield return (titulo, corpo.ToString());
     }
 
-    /// <summary>Parágrafos; parágrafo maior que o trecho é quebrado em frases.</summary>
+    /// <summary>Parágrafos; parágrafo maior que o trecho é quebrado em frases e, no limite, por palavra.</summary>
     private static IEnumerable<string> Blocos(string corpo, int tamanho)
     {
         foreach (var paragrafo in Paragrafo().Split(corpo).Select(p => p.Trim()).Where(p => p.Length > 0))
@@ -82,7 +92,7 @@ public static partial class Fatiador
             }
 
             var pedaco = new StringBuilder();
-            foreach (var frase in Frases(paragrafo))
+            foreach (var frase in Frases(paragrafo).SelectMany(f => Cortar(f, tamanho)))
             {
                 if (pedaco.Length > 0 && pedaco.Length + frase.Length + 1 > tamanho)
                 {
@@ -94,6 +104,40 @@ public static partial class Fatiador
             if (pedaco.Length > 0)
                 yield return pedaco.ToString().Trim();
         }
+    }
+
+    /// <summary>Último recurso para texto sem fim de frase: corta por palavra; palavra maior que o trecho, por caractere.</summary>
+    private static IEnumerable<string> Cortar(string frase, int tamanho)
+    {
+        if (frase.Length <= tamanho)
+        {
+            yield return frase;
+            yield break;
+        }
+
+        var pedaco = new StringBuilder();
+        foreach (var palavra in frase.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (palavra.Length > tamanho)
+            {
+                if (pedaco.Length > 0)
+                {
+                    yield return pedaco.ToString().Trim();
+                    pedaco.Clear();
+                }
+                for (var i = 0; i < palavra.Length; i += tamanho)
+                    yield return palavra.Substring(i, Math.Min(tamanho, palavra.Length - i));
+                continue;
+            }
+            if (pedaco.Length + palavra.Length + 1 > tamanho)
+            {
+                yield return pedaco.ToString().Trim();
+                pedaco.Clear();
+            }
+            pedaco.Append(palavra).Append(' ');
+        }
+        if (pedaco.Length > 0)
+            yield return pedaco.ToString().Trim();
     }
 
     private static IEnumerable<string> Frases(string paragrafo) =>

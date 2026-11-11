@@ -8,6 +8,8 @@ namespace RagDocuments.Core.Armazenamento;
 
 public sealed record DocumentoResumo(Guid Id, string Nome, string? Origem, int Trechos, DateTimeOffset IngeridoEm);
 
+public sealed record DocumentoGravado(Guid Id, string Hash, int Trechos);
+
 /// <param name="Similaridade">Cosseno entre a pergunta e o trecho (1 = idêntico), ou null se veio só da busca textual.</param>
 /// <param name="CoberturaTextual">Fração dos termos da pergunta (já sem palavras vazias e reduzidos ao radical) presentes no trecho.</param>
 public sealed record TrechoEncontrado(
@@ -17,18 +19,17 @@ public sealed record TrechoEncontrado(
 public sealed class ModeloDeEmbeddingDivergenteException(string mensagem) : Exception(mensagem);
 
 /// <summary>
-/// PostgreSQL + pgvector com SQL explícito. A dimensão do vetor vem da configuração, e o modelo de
-/// embedding usado na indexação fica gravado: trocar de modelo sem reindexar é recusado na subida,
-/// em vez de produzir buscas silenciosamente erradas.
+/// PostgreSQL + pgvector com SQL explícito. A dimensão do vetor vem da configuração, e o que define
+/// o índice (modelo de embedding, dimensões, prefixo e idioma da busca textual) fica gravado: subir
+/// com outra configuração sem reindexar é recusado, em vez de produzir buscas silenciosamente erradas.
 /// </summary>
 public sealed class BancoVetorial(NpgsqlDataSource fonte, OpcoesRag opcoes)
 {
     public async Task PrepararAsync(CancellationToken ct = default)
     {
+        opcoes.Validar();
         var dimensoes = opcoes.DimensoesDoEmbedding.ToString(CultureInfo.InvariantCulture);
         var idioma = opcoes.IdiomaDaBuscaTextual;
-        if (!idioma.All(char.IsAsciiLetterLower))
-            throw new InvalidOperationException($"Idioma de busca textual inválido: '{idioma}'.");
 
         await using (var conexao = await fonte.OpenConnectionAsync(ct))
         await using (var cmd = new NpgsqlCommand("CREATE EXTENSION IF NOT EXISTS vector", conexao))
@@ -65,50 +66,76 @@ public sealed class BancoVetorial(NpgsqlDataSource fonte, OpcoesRag opcoes)
                 CREATE INDEX IF NOT EXISTS trechos_documento ON trechos (documento_id);
                 """, ct);
 
-            await VerificarModeloAsync(conexao, ct);
+            await VerificarAssinaturaAsync(conexao, ct);
         }
     }
 
-    private async Task VerificarModeloAsync(NpgsqlConnection conexao, CancellationToken ct)
+    private async Task VerificarAssinaturaAsync(NpgsqlConnection conexao, CancellationToken ct)
     {
-        // O prefixo do documento também muda os vetores gravados, então faz parte da assinatura.
-        var esperado = $"{opcoes.ModeloDeEmbedding}|{opcoes.DimensoesDoEmbedding}|{opcoes.PrefixoDoDocumento.Trim()}";
-        await using var ler = new NpgsqlCommand("SELECT valor FROM rag_configuracao WHERE chave = 'embedding'", conexao);
-        var gravado = (string?)await ler.ExecuteScalarAsync(ct);
+        // Tudo o que muda o conteúdo do índice: os vetores (modelo, dimensões, prefixo) e a coluna de busca textual (idioma).
+        var esperado = string.Join('|',
+            opcoes.ModeloDeEmbedding, opcoes.DimensoesDoEmbedding.ToString(CultureInfo.InvariantCulture),
+            opcoes.PrefixoDoDocumento.Trim(), opcoes.IdiomaDaBuscaTextual);
 
-        if (gravado is null)
+        await using (var gravar = new NpgsqlCommand(
+            "INSERT INTO rag_configuracao (chave, valor) VALUES ('indice', @v) ON CONFLICT (chave) DO NOTHING", conexao))
         {
-            await using var gravar = new NpgsqlCommand(
-                "INSERT INTO rag_configuracao (chave, valor) VALUES ('embedding', @v) ON CONFLICT (chave) DO NOTHING", conexao);
             gravar.Parameters.AddWithValue("v", esperado);
             await gravar.ExecuteNonQueryAsync(ct);
-            return;
         }
 
+        // Relê depois de gravar: se duas instâncias subirem juntas com configurações diferentes, a segunda percebe.
+        await using var ler = new NpgsqlCommand("SELECT valor FROM rag_configuracao WHERE chave = 'indice'", conexao);
+        var gravado = (string)(await ler.ExecuteScalarAsync(ct))!;
         if (gravado != esperado)
         {
             throw new ModeloDeEmbeddingDivergenteException(
-                $"O banco foi indexado com o embedding '{gravado.Replace('|', ' ')}' e a configuração atual é " +
-                $"'{esperado.Replace('|', ' ')}'. Vetores de modelos diferentes não são comparáveis: use o mesmo " +
-                "modelo ou crie um banco novo e reingira os documentos.");
+                $"O banco foi indexado com '{gravado.Replace('|', ' ')}' (modelo, dimensões, prefixo, idioma) e a " +
+                $"configuração atual é '{esperado.Replace('|', ' ')}'. Índices de configurações diferentes não são " +
+                "comparáveis: volte à configuração anterior ou crie um banco novo e reingira os documentos.");
         }
     }
 
-    public async Task<(Guid Id, string Hash)?> BuscarDocumentoPorNomeAsync(string nome, CancellationToken ct = default)
+    public async Task<DocumentoGravado?> BuscarDocumentoPorNomeAsync(string nome, CancellationToken ct = default)
     {
-        await using var cmd = fonte.CreateCommand("SELECT id, hash_conteudo FROM documentos WHERE nome = @nome");
+        await using var cmd = fonte.CreateCommand("""
+            SELECT d.id, d.hash_conteudo, (SELECT count(*)::int FROM trechos t WHERE t.documento_id = d.id)
+            FROM documentos d WHERE d.nome = @nome
+            """);
         cmd.Parameters.AddWithValue("nome", nome);
         await using var r = await cmd.ExecuteReaderAsync(ct);
-        return await r.ReadAsync(ct) ? (r.GetGuid(0), r.GetString(1)) : null;
+        return await r.ReadAsync(ct) ? new DocumentoGravado(r.GetGuid(0), r.GetString(1), r.GetInt32(2)) : null;
     }
 
-    /// <summary>Grava o documento e todos os trechos numa transação; se já existia com esse nome, substitui.</summary>
-    public async Task<Guid> GravarAsync(
+    /// <summary>
+    /// Grava o documento e todos os trechos numa transação; se já existia com esse nome, substitui.
+    /// Uma trava por nome serializa ingestões simultâneas do mesmo documento, e o hash é conferido de
+    /// novo dentro dela: quem chegar depois com o mesmo conteúdo não grava nada.
+    /// </summary>
+    public async Task<(DocumentoGravado Documento, bool Gravou)> GravarAsync(
         string nome, string? origem, string hash, IReadOnlyList<Trecho> trechos,
         IReadOnlyList<ReadOnlyMemory<float>> embeddings, CancellationToken ct = default)
     {
         await using var conexao = await fonte.OpenConnectionAsync(ct);
         await using var tx = await conexao.BeginTransactionAsync(ct);
+
+        await using (var travar = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended(@nome, 0))", conexao, tx))
+        {
+            travar.Parameters.AddWithValue("nome", nome);
+            await travar.ExecuteNonQueryAsync(ct);
+        }
+
+        await using (var conferir = new NpgsqlCommand("""
+            SELECT d.id, (SELECT count(*)::int FROM trechos t WHERE t.documento_id = d.id)
+            FROM documentos d WHERE d.nome = @nome AND d.hash_conteudo = @hash
+            """, conexao, tx))
+        {
+            conferir.Parameters.AddWithValue("nome", nome);
+            conferir.Parameters.AddWithValue("hash", hash);
+            await using var r = await conferir.ExecuteReaderAsync(ct);
+            if (await r.ReadAsync(ct))
+                return (new DocumentoGravado(r.GetGuid(0), hash, r.GetInt32(1)), false);
+        }
 
         await using (var apagar = new NpgsqlCommand("DELETE FROM documentos WHERE nome = @nome", conexao, tx))
         {
@@ -146,7 +173,7 @@ public sealed class BancoVetorial(NpgsqlDataSource fonte, OpcoesRag opcoes)
         }
 
         await tx.CommitAsync(ct);
-        return id;
+        return (new DocumentoGravado(id, hash, trechos.Count), true);
     }
 
     public async Task<IReadOnlyList<DocumentoResumo>> ListarAsync(CancellationToken ct = default)
@@ -171,65 +198,86 @@ public sealed class BancoVetorial(NpgsqlDataSource fonte, OpcoesRag opcoes)
     }
 
     /// <summary>
-    /// Busca híbrida numa consulta só: os N mais próximos por cosseno (índice HNSW) e os N melhores pela
-    /// busca textual do PostgreSQL (índice GIN), fundidos por Reciprocal Rank Fusion (k = 60).
-    /// A vetorial acha pelo significado; a textual acha nome próprio, sigla e código que o embedding borra.
-    /// A textual recupera por qualquer termo da pergunta (OU) e devolve a cobertura, para o filtro de
-    /// relevância decidir; exigir todos os termos (E) perde quase toda pergunta em linguagem natural.
+    /// Busca híbrida numa consulta só. Cada lado limita os próprios candidatos usando o índice (HNSW para
+    /// o cosseno, GIN para o texto); só os ids desses candidatos são unidos e cruzados com as tabelas pela
+    /// chave primária. A fusão é Reciprocal Rank Fusion (k = 60).
+    /// A textual recupera por qualquer termo da pergunta (OU) e devolve a cobertura, calculada por
+    /// interseção de arrays de radicais, sem montar tsquery a partir de texto.
     /// </summary>
-    public async Task<IReadOnlyList<TrechoEncontrado>> BuscarAsync(
-        ReadOnlyMemory<float> vetorDaPergunta, string pergunta, CancellationToken ct = default)
-    {
-        var idioma = opcoes.IdiomaDaBuscaTextual;
-        await using var cmd = fonte.CreateCommand($"""
-            WITH vetorial AS (
-                SELECT id, row_number() OVER (ORDER BY embedding <=> @vetor) AS posicao,
-                       1 - (embedding <=> @vetor) AS similaridade
+    internal string SqlDaBusca() => $"""
+        WITH vetorial AS (
+            SELECT id, similaridade, row_number() OVER (ORDER BY distancia) AS posicao
+            FROM (
+                SELECT id, embedding <=> @vetor AS distancia, 1 - (embedding <=> @vetor) AS similaridade
                 FROM trechos
                 ORDER BY embedding <=> @vetor
                 LIMIT @candidatos
-            ),
-            consulta AS (
-                SELECT replace(plainto_tsquery('{idioma}', @pergunta)::text, ' & ', ' | ')::tsquery AS q,
-                       tsvector_to_array(to_tsvector('{idioma}', @pergunta)) AS termos
-            ),
-            textual AS (
-                SELECT t.id,
-                       row_number() OVER (ORDER BY ts_rank_cd(t.busca, c.q) DESC) AS posicao,
-                       (SELECT count(*) FROM unnest(c.termos) termo WHERE t.busca @@ quote_literal(termo)::tsquery)::float8
+            ) proximos
+        ),
+        consulta AS (
+            SELECT replace(plainto_tsquery('{opcoes.IdiomaDaBuscaTextual}', @pergunta)::text, ' & ', ' | ')::tsquery AS q,
+                   tsvector_to_array(to_tsvector('{opcoes.IdiomaDaBuscaTextual}', @pergunta)) AS termos
+        ),
+        textual AS (
+            SELECT id, cobertura, row_number() OVER (ORDER BY relevancia DESC) AS posicao
+            FROM (
+                SELECT t.id, ts_rank_cd(t.busca, c.q) AS relevancia,
+                       cardinality(ARRAY(SELECT unnest(c.termos) INTERSECT SELECT unnest(tsvector_to_array(t.busca))))::float8
                            / greatest(cardinality(c.termos), 1) AS cobertura
                 FROM trechos t, consulta c
                 WHERE cardinality(c.termos) > 0 AND t.busca @@ c.q
-                ORDER BY ts_rank_cd(t.busca, c.q) DESC
+                ORDER BY relevancia DESC
                 LIMIT @candidatos
-            )
-            SELECT t.id, t.documento_id, d.nome, t.secao, t.conteudo,
-                   coalesce(1.0 / (60 + v.posicao), 0) + coalesce(1.0 / (60 + x.posicao), 0) AS pontuacao,
-                   v.similaridade,
-                   coalesce(x.cobertura, 0) AS cobertura
-            FROM trechos t
-            JOIN documentos d ON d.id = t.documento_id
-            LEFT JOIN vetorial v ON v.id = t.id
-            LEFT JOIN textual x ON x.id = t.id
-            WHERE v.id IS NOT NULL OR x.id IS NOT NULL
-            ORDER BY pontuacao DESC
-            LIMIT @limite
-            """);
+            ) melhores
+        ),
+        candidatos AS (SELECT id FROM vetorial UNION SELECT id FROM textual)
+        SELECT t.id, t.documento_id, d.nome, t.secao, t.conteudo,
+               coalesce(1.0 / (60 + v.posicao), 0) + coalesce(1.0 / (60 + x.posicao), 0) AS pontuacao,
+               v.similaridade,
+               coalesce(x.cobertura, 0) AS cobertura
+        FROM candidatos k
+        JOIN trechos t ON t.id = k.id
+        JOIN documentos d ON d.id = t.documento_id
+        LEFT JOIN vetorial v ON v.id = k.id
+        LEFT JOIN textual x ON x.id = k.id
+        ORDER BY pontuacao DESC
+        LIMIT @candidatos
+        """;
+
+    internal void PreencherParametros(NpgsqlCommand cmd, ReadOnlyMemory<float> vetorDaPergunta, string pergunta)
+    {
         cmd.Parameters.AddWithValue("vetor", new Vector(vetorDaPergunta));
         cmd.Parameters.Add(new NpgsqlParameter("pergunta", NpgsqlDbType.Text) { Value = pergunta });
         cmd.Parameters.AddWithValue("candidatos", opcoes.CandidatosPorBusca);
-        cmd.Parameters.AddWithValue("limite", opcoes.CandidatosPorBusca);
+    }
 
-        await using var r = await cmd.ExecuteReaderAsync(ct);
+    public async Task<IReadOnlyList<TrechoEncontrado>> BuscarAsync(
+        ReadOnlyMemory<float> vetorDaPergunta, string pergunta, CancellationToken ct = default)
+    {
+        await using var conexao = await fonte.OpenConnectionAsync(ct);
+        await using var tx = await conexao.BeginTransactionAsync(ct);
+
+        // O HNSW devolve no máximo ef_search vizinhos (padrão 40); com mais candidatos que isso, sobem junto.
+        var efSearch = Math.Max(40, opcoes.CandidatosPorBusca).ToString(CultureInfo.InvariantCulture);
+        await using (var ajustar = new NpgsqlCommand($"SET LOCAL hnsw.ef_search = {efSearch}", conexao, tx))
+            await ajustar.ExecuteNonQueryAsync(ct);
+
+        await using var cmd = new NpgsqlCommand(SqlDaBusca(), conexao, tx);
+        PreencherParametros(cmd, vetorDaPergunta, pergunta);
+
         var lista = new List<TrechoEncontrado>();
-        while (await r.ReadAsync(ct))
+        await using (var r = await cmd.ExecuteReaderAsync(ct))
         {
-            lista.Add(new TrechoEncontrado(
-                r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetString(4),
-                Convert.ToDouble(r.GetValue(5), CultureInfo.InvariantCulture),
-                r.IsDBNull(6) ? null : r.GetDouble(6),
-                r.GetDouble(7)));
+            while (await r.ReadAsync(ct))
+            {
+                lista.Add(new TrechoEncontrado(
+                    r.GetGuid(0), r.GetGuid(1), r.GetString(2), r.IsDBNull(3) ? null : r.GetString(3), r.GetString(4),
+                    Convert.ToDouble(r.GetValue(5), CultureInfo.InvariantCulture),
+                    r.IsDBNull(6) ? null : r.GetDouble(6),
+                    r.GetDouble(7)));
+            }
         }
+        await tx.CommitAsync(ct);
         return lista;
     }
 

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.AI;
@@ -27,16 +28,21 @@ public sealed class IngestaoService(
         if (string.IsNullOrWhiteSpace(conteudo))
             throw new ArgumentException("O documento está vazio.", nameof(conteudo));
 
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(conteudo.Trim())));
+        // O fatiamento faz parte da identidade: mudar o tamanho do trecho tem que reprocessar o documento.
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture,
+            $"{opcoes.TamanhoDoTrecho}|{opcoes.Sobreposicao}|{conteudo.Trim()}"))));
+
         var existente = await banco.BuscarDocumentoPorNomeAsync(nome, ct);
-        if (existente is { } e && e.Hash == hash)
+        if (existente is not null && existente.Hash == hash)
         {
             atividade?.SetTag("rag.ingestao.ja_atualizado", true);
-            var trechosAtuais = (await banco.ListarAsync(ct)).First(d => d.Id == e.Id).Trechos;
-            return new ResultadoDaIngestao(e.Id, trechosAtuais, JaEstavaAtualizado: true, Substituiu: false);
+            return new ResultadoDaIngestao(existente.Id, existente.Trechos, JaEstavaAtualizado: true, Substituiu: false);
         }
 
         var trechos = Fatiador.Fatiar(conteudo, opcoes.TamanhoDoTrecho, opcoes.Sobreposicao);
+        if (trechos.Count == 0)
+            throw new ArgumentException("O documento não tem texto além de títulos.", nameof(conteudo));
+
         var vetores = new List<ReadOnlyMemory<float>>(trechos.Count);
         foreach (var lote in trechos.Chunk(LoteDeEmbeddings))
         {
@@ -54,8 +60,9 @@ public sealed class IngestaoService(
             }
         }
 
-        var id = await banco.GravarAsync(nome, origem, hash, trechos, vetores, ct);
-        atividade?.SetTag("rag.ingestao.trechos", trechos.Count);
-        return new ResultadoDaIngestao(id, trechos.Count, JaEstavaAtualizado: false, Substituiu: existente is not null);
+        var (documento, gravou) = await banco.GravarAsync(nome, origem, hash, trechos, vetores, ct);
+        atividade?.SetTag("rag.ingestao.trechos", documento.Trechos);
+        return new ResultadoDaIngestao(documento.Id, documento.Trechos,
+            JaEstavaAtualizado: !gravou, Substituiu: gravou && existente is not null);
     }
 }

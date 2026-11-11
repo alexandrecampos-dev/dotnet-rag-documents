@@ -1,6 +1,6 @@
 # dotnet-rag-documents
 
-Pipeline **RAG (Retrieval-Augmented Generation)** em **.NET 10**: ingere documentos, busca de forma híbrida no PostgreSQL (pgvector + busca textual) e responde com **citações verificáveis**. Os provedores de modelo são trocados por configuração (Ollama, OpenAI, Azure OpenAI, Groq), e tudo roda 100% local com um `docker compose up`.
+Pipeline **RAG (Retrieval-Augmented Generation)** em **.NET 10**: ingere documentos, busca de forma híbrida no PostgreSQL (pgvector + busca textual) e responde com **citações verificáveis**. Os provedores de modelo são trocados por configuração (Ollama, OpenAI, Azure OpenAI, Groq), e tudo roda 100% local: PostgreSQL e Ollama sobem com um `docker compose up`.
 
 [![CI](https://github.com/alexandrecampos-dev/dotnet-rag-documents/actions/workflows/ci.yml/badge.svg)](https://github.com/alexandrecampos-dev/dotnet-rag-documents/actions/workflows/ci.yml)
 [![.NET](https://img.shields.io/badge/.NET-10-512BD4?style=flat-square&logo=dotnet)](https://dotnet.microsoft.com)
@@ -41,11 +41,13 @@ dotnet run --project src/RagDocuments.Api                       # API em http://
 ```
 
 ```bash
-curl -s http://localhost:5200/perguntas -H "Content-Type: application/json" \
+curl -s http://localhost:5200/perguntas -H "Content-Type: application/json; charset=utf-8" \
   -d '{"pergunta":"Em quantas partes posso dividir minhas férias?"}'
 ```
 
-Resposta real, com `qwen2.5:3b` gerando e `nomic-embed-text` embutindo, rodando em CPU:
+> No Git Bash do Windows, o `curl` envia o texto do `-d` na página de código do Windows e os acentos chegam inválidos (a API responde 400). Grave o JSON num arquivo UTF-8 e use `--data-binary @pergunta.json`, ou chame pelo PowerShell.
+
+Resposta real, com `qwen2.5:3b` gerando e `nomic-embed-text` embutindo, rodando em CPU (trecho encurtado aqui; a API devolve até 300 caracteres e o id do documento):
 
 ```json
 {
@@ -65,7 +67,7 @@ Resposta real, com `qwen2.5:3b` gerando e `nomic-embed-text` embutindo, rodando 
 }
 ```
 
-E uma pergunta fora do escopo, que não chega ao modelo (zero token):
+E uma pergunta fora do escopo, que não chega ao modelo e não gasta nenhum token:
 
 ```json
 { "texto": "Não encontrei essa informação nos documentos.", "situacao": "nao_encontrada", "fontes": [],
@@ -78,15 +80,17 @@ E uma pergunta fora do escopo, que não chega ao modelo (zero token):
 |---|---|---|
 | `POST` | `/perguntas` | Responde com texto, situação (`respondida`, `nao_encontrada`, `sem_citacao`), fontes citadas e uso (tokens e tempos). |
 | `POST` | `/documentos` | Ingere `{ "nome", "conteudo", "origem" }`. |
-| `POST` | `/documentos/arquivo` | Ingere um `.md` ou `.txt` enviado como formulário. |
+| `POST` | `/documentos/arquivo` | Ingere um `.md` ou `.txt` enviado como formulário: `curl -F arquivo=@manual.md`. |
 | `GET` | `/documentos` | Lista os documentos indexados. |
 | `DELETE` | `/documentos/{id}` | Remove um documento e seus trechos. |
+
+A API não tem autenticação: é para rodar na sua máquina. Mesmo assim, escrita com cabeçalho `Origin` de outro site é recusada (um formulário em qualquer página aberta no navegador conseguiria enviar documento para `localhost`), perguntas com mais de 2.000 caracteres e documentos com mais de 2 milhões são recusados com 400, e upload que não está em UTF-8 é recusado em vez de gravado com caractere trocado. O `docker compose` publica PostgreSQL e Ollama só em `127.0.0.1`.
 
 ---
 
 ## Trocar de provedor
 
-Chat e embedding têm seções próprias (`Ia:Chat` e `Ia:Embedding`). Os tipos são `Ollama` e `OpenAICompativel`, que serve para OpenAI, Azure OpenAI e Groq, porque os três falam a mesma API. A chave vai por variável de ambiente ou user-secrets, nunca no `appsettings.json`.
+Chat e embedding têm seções próprias (`Ia:Chat` e `Ia:Embedding`). Os tipos são `Ollama` e `OpenAICompativel`, que serve para OpenAI, Azure OpenAI e Groq, porque os três falam a mesma API. A chave vai por variável de ambiente ou `dotnet user-secrets`, nunca no `appsettings.json`.
 
 ```bash
 # Gerar com OpenAI, embutir local com Ollama
@@ -98,7 +102,7 @@ export Ia__Chat__ChaveDeApi=sk-...
 # Azure OpenAI: o mesmo tipo, com o endpoint v1 do recurso
 export Ia__Chat__Endpoint=https://SEU-RECURSO.openai.azure.com/openai/v1/
 
-# Groq (só chat; o Groq não oferece embeddings)
+# Groq (aqui só para chat; o embedding continua em outro provedor)
 export Ia__Chat__Endpoint=https://api.groq.com/openai/v1
 ```
 
@@ -114,7 +118,7 @@ dotnet run --project src/RagDocuments.Api -- avaliar evals/perguntas.json
 
 Para cada pergunta, o comando mostra a melhor similaridade e a melhor cobertura textual encontradas (é com esses números que se calibra `Rag:SimilaridadeMinima` para o modelo em uso), a situação e a resposta. No fim, três indicadores: documento certo citado, respostas com citação válida e recusa correta das perguntas fora do escopo.
 
-Resultado medido com a configuração padrão (`qwen2.5:3b` + `nomic-embed-text`, limiar 0,62), sobre os documentos de `exemplos/`:
+Resultado medido com a configuração padrão (`qwen2.5:3b` + `nomic-embed-text`, limiar 0,62), sobre os documentos de `exemplos/`. São 14 perguntas: amostra pequena, boa para comparar configurações, não para prometer taxa de acerto em produção.
 
 | Indicador | Resultado |
 |---|---|
@@ -125,8 +129,8 @@ Resultado medido com a configuração padrão (`qwen2.5:3b` + `nomic-embed-text`
 O que os números mostraram, e que vale para qualquer RAG:
 
 - **O limiar sozinho não separa o escopo.** Com o `nomic-embed-text` em português, a menor similaridade de uma pergunta do escopo foi 0,66 e a maior de uma pergunta fora dele foi 0,69 ("qual a cotação do dólar hoje?"). Os prefixos de tarefa que o modelo pede (`search_query:` e `search_document:`) não mudaram isso. Por isso a recusa é em camadas: o limiar de 0,62 corta o que está claramente longe sem chamar o modelo ("Copa do Mundo" ficou em 0,57; "bolo de cenoura", 0,60), e o que passa é recusado pela regra do prompt. Para português, vale testar um embedding multilíngue e recalibrar com o mesmo comando.
-- **Modelo pequeno varia entre execuções.** Com o mesmo prompt, uma de quatro rodadas teve 10 de 11 citações válidas; a resposta sem citação voltou marcada como `sem_citacao`, que é para isso que a marcação existe.
-- **Nem toda mudança de prompt ajuda.** Repetir a regra de citação no fim da mensagem, para lembrar o modelo, piorou o resultado: ele passou a recusar uma pergunta que sabia responder. A mudança foi descartada, e só se sabe disso porque havia um eval para medir.
+- **Modelo pequeno varia entre execuções.** Em três rodadas com o mesmo prompt, uma teve 10 de 11 citações válidas; a resposta sem citação voltou marcada como `sem_citacao`, que é para isso que a marcação existe.
+- **Nem toda mudança de prompt ajuda.** Repetir a regra de citação no fim da mensagem, para lembrar o modelo, piorou o resultado: ele passou a recusar uma pergunta que sabia responder e a pôr a citação no começo da frase. A mudança foi descartada, e só se sabe disso porque havia um eval para medir.
 
 ---
 
@@ -136,13 +140,14 @@ O que os números mostraram, e que vale para qualquer RAG:
 dotnet test
 ```
 
-Os testes de integração sobem um **PostgreSQL com pgvector de verdade** (Testcontainers) e usam um embedding determinístico no lugar do modelo, para rodar no CI sem chave e sem rede:
+São 39 testes. Os de integração sobem um **PostgreSQL com pgvector de verdade** (Testcontainers) e usam um embedding determinístico no lugar do modelo, para rodar no CI sem chave e sem rede:
 
-- **Ingestão:** reingerir o mesmo conteúdo não gasta embedding; conteúdo novo substitui; trocar de modelo de embedding é recusado.
-- **Resposta:** pergunta fora do escopo não chama o modelo; busca textual acha a sigla `CONF-3`; citação inexistente é descartada; resposta sem citação é marcada; documento malicioso chega neutralizado.
+- **Ingestão:** reingerir o mesmo conteúdo não gasta embedding; conteúdo novo apaga os trechos antigos; seis ingestões simultâneas do mesmo nome terminam com um documento só; mudar o tamanho do trecho reprocessa; trocar de modelo de embedding ou de idioma da busca textual é recusado na subida.
+- **Resposta:** pergunta fora do escopo não chama o modelo; busca textual acha a sigla `CONF-3`; citação inexistente é descartada; resposta sem citação é marcada; resposta parcial com citação não vira "não encontrei"; documento malicioso chega neutralizado.
+- **Plano da consulta:** o `EXPLAIN` da busca híbrida precisa usar os índices HNSW e GIN e acessar a tabela só pela chave primária dos candidatos, sem percorrê-la inteira.
 - **Eval de recuperação:** todas as perguntas de `evals/perguntas.json` trazem o documento certo, e as fora do escopo não trazem nada.
-- **API:** ingerir e perguntar pela API; corpo inválido responde 400, não 500; pergunta vazia não chama o modelo.
-- **Unidade:** fatiamento por seção e frase com sobreposição, delimitação do prompt e leitura de citações.
+- **API:** ingerir e perguntar pela API; corpo inválido, pergunta longa, documento só com títulos e upload fora de UTF-8 respondem 400; escrita vinda de outro site responde 403.
+- **Unidade:** fatiamento por seção e frase com sobreposição, texto sem pontuação, palavra maior que o trecho, `#` dentro de bloco de código; delimitação do prompt contra fechamento de tag, marcadores de template de chat e caracteres invisíveis; leitura de citações.
 
 ---
 
@@ -158,7 +163,7 @@ exemplos/              documentos fictícios para testar
 evals/                 perguntas com documento esperado
 ```
 
-## Para levar a produção
+## Para levar à produção
 
 - Reranking com cross-encoder entre a busca e a geração, quando o acervo crescer.
 - Fatiamento por tokens do modelo de embedding, em vez de caracteres.
@@ -167,7 +172,7 @@ evals/                 perguntas com documento esperado
 
 ## Histórico
 
-- **2.0.0:** busca híbrida, limiar de relevância, citações verificáveis, defesa contra instrução em documento, provedores via Microsoft.Extensions.AI (Ollama, OpenAI, Azure OpenAI, Groq), trava de modelo de embedding, ingestão idempotente, OpenTelemetry, evals, testes com PostgreSQL real e `docker compose`. Sai o EF Core e o MediatR.
+- **2.0.0:** busca híbrida, limiar de relevância, citações verificáveis, defesa contra instrução em documento, provedores via Microsoft.Extensions.AI (Ollama, OpenAI, Azure OpenAI, Groq), trava de modelo de embedding, ingestão idempotente, OpenTelemetry, evals, testes com PostgreSQL real e `docker compose`. Saem o EF Core e o MediatR.
 - **1.0.0** ([tag](https://github.com/alexandrecampos-dev/dotnet-rag-documents/tree/v1.0.0)): não subia do zero (chamava `Migrate()` sem migrações no repositório), a troca para Ollama quebrava (coluna fixa em 1.536 dimensões) e a geração só existia para Azure OpenAI.
 
 ## Licença

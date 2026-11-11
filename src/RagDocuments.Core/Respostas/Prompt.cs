@@ -51,10 +51,25 @@ public static partial class Prompt
              .Replace("<", "&lt;", StringComparison.Ordinal)
              .Replace(">", "&gt;", StringComparison.Ordinal);
 
-    /// <summary>Impede que o texto feche os delimitadores e se passe por instrução fora deles.</summary>
-    internal static string Neutralizar(string texto) =>
-        Delimitador().Replace(texto, m => m.Value.Replace("<", "‹", StringComparison.Ordinal));
+    /// <summary>
+    /// Impede que o texto feche os delimitadores e se passe por instrução fora deles: remove caracteres
+    /// invisíveis de formatação (que esconderiam um "&lt;/documento&gt;"), desarma as tags que usamos e os
+    /// marcadores de template de chat (&lt;|im_start|&gt;, [INST], &lt;&lt;SYS&gt;&gt;) com que um documento
+    /// poderia tentar abrir uma mensagem de sistema falsa.
+    /// </summary>
+    internal static string Neutralizar(string texto)
+    {
+        var semInvisiveis = new string(texto.Where(c =>
+            char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format).ToArray());
+        var semDelimitador = Delimitador().Replace(semInvisiveis, m => m.Value.Replace("<", "‹", StringComparison.Ordinal));
+        return MarcadorDeTemplate().Replace(semDelimitador, m => m.Value
+            .Replace("<", "‹", StringComparison.Ordinal)
+            .Replace("[", "［", StringComparison.Ordinal));
+    }
 
     [GeneratedRegex(@"</?\s*(documentos?|pergunta)\b", RegexOptions.IgnoreCase)]
     private static partial Regex Delimitador();
+
+    [GeneratedRegex(@"<\|[^|<>\n]{0,40}\|>|\[/?INST\]|<</?SYS>>", RegexOptions.IgnoreCase)]
+    private static partial Regex MarcadorDeTemplate();
 }

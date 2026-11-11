@@ -49,10 +49,12 @@ public sealed partial class RespostaService(
         var texto = resposta.Text.Trim();
         var uso = new Uso(resposta.Usage?.InputTokenCount, resposta.Usage?.OutputTokenCount, msBusca, msGeracao);
 
-        if (texto.Contains(Prompt.NaoEncontrei.TrimEnd('.'), StringComparison.OrdinalIgnoreCase))
-            return new Resposta(Prompt.NaoEncontrei, "nao_encontrada", [], relevantes.Count, uso);
-
         var citadas = Citacoes(texto, relevantes.Count);
+
+        // Só é recusa quando não há nenhuma citação válida. "O limite é R$ 80 [1]; sobre hospedagem não
+        // encontrei essa informação" é uma resposta parcial legítima, e não pode virar "não encontrei".
+        if (citadas.Count == 0 && texto.Contains(Prompt.NaoEncontrei.TrimEnd('.'), StringComparison.OrdinalIgnoreCase))
+            return new Resposta(Prompt.NaoEncontrei, "nao_encontrada", [], relevantes.Count, uso);
         var fontes = citadas
             .Select(n => (n, t: relevantes[n - 1]))
             .Select(x => new Fonte(x.n, x.t.DocumentoId, x.t.Documento, x.t.Secao, Resumir(x.t.Conteudo), x.t.Similaridade))

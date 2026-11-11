@@ -13,9 +13,10 @@ public sealed class OpcoesRag
     public int DimensoesDoEmbedding { get; set; } = 768;
 
     /// <summary>
-    /// Prefixos de tarefa que alguns modelos exigem no texto a embutir. O nomic-embed-text foi treinado com
-    /// "search_query: " na pergunta e "search_document: " no documento; sem eles, as similaridades ficam
-    /// espremidas e o limiar não separa o que é do escopo. Modelos da OpenAI não usam: deixe vazio.
+    /// Prefixos de tarefa que alguns modelos pedem no texto a embutir. O nomic-embed-text foi treinado com
+    /// "search_query: " na pergunta e "search_document: " no documento, e a documentação dele pede os dois.
+    /// (No eval deste repositório, em português, eles não mudaram a separação entre perguntas do escopo e
+    /// fora dele; veja o README.) Modelos da OpenAI não usam: deixe vazio.
     /// </summary>
     public string PrefixoDaPergunta { get; set; } = string.Empty;
 
@@ -47,6 +48,28 @@ public sealed class OpcoesRag
 
     /// <summary>Configuração de busca textual do PostgreSQL.</summary>
     public string IdiomaDaBuscaTextual { get; set; } = "portuguese";
+
+    /// <summary>Configuração inválida falha na subida, com o motivo, e não na primeira pergunta.</summary>
+    public void Validar()
+    {
+        static void Exigir(bool condicao, string mensagem)
+        {
+            if (!condicao)
+                throw new InvalidOperationException($"Configuração Rag inválida: {mensagem}");
+        }
+
+        Exigir(!string.IsNullOrWhiteSpace(ModeloDeEmbedding), "ModeloDeEmbedding é obrigatório.");
+        // O índice HNSW do pgvector aceita vetores de até 2.000 dimensões.
+        Exigir(DimensoesDoEmbedding is >= 1 and <= 2000, "DimensoesDoEmbedding precisa estar entre 1 e 2000.");
+        Exigir(TamanhoDoTrecho is >= 200 and <= 20_000, "TamanhoDoTrecho precisa estar entre 200 e 20000.");
+        Exigir(Sobreposicao >= 0 && Sobreposicao <= TamanhoDoTrecho / 2, "Sobreposicao precisa estar entre 0 e metade do TamanhoDoTrecho.");
+        Exigir(TrechosNoContexto is >= 1 and <= 20, "TrechosNoContexto precisa estar entre 1 e 20.");
+        Exigir(CandidatosPorBusca >= TrechosNoContexto && CandidatosPorBusca <= 200, "CandidatosPorBusca precisa estar entre TrechosNoContexto e 200.");
+        Exigir(SimilaridadeMinima is >= 0 and <= 1, "SimilaridadeMinima precisa estar entre 0 e 1.");
+        Exigir(CoberturaTextualMinima is > 0 and <= 1, "CoberturaTextualMinima precisa ser maior que 0 e no máximo 1.");
+        Exigir(IdiomaDaBuscaTextual.Length > 0 && IdiomaDaBuscaTextual.All(char.IsAsciiLetterLower),
+            "IdiomaDaBuscaTextual precisa ser o nome de uma configuração do PostgreSQL, como 'portuguese'.");
+    }
 }
 
 public static class Telemetria

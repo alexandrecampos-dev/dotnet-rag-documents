@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: rag
       POSTGRES_DB: rag
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"   # só nesta máquina: a senha "rag" é de desenvolvimento
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -23,7 +23,7 @@ services:
   ollama:
     image: ollama/ollama:0.40.16
     ports:
-      - "11434:11434"
+      - "127.0.0.1:11434:11434" # a API do Ollama não tem autenticação
     volumes:
       - ollama:/root/.ollama
 

@@ -21,7 +21,7 @@ internal sealed class OpcoesDeProvedor
 /// <summary>
 /// A aplicação só conhece duas operações: gerar (IChatClient) e embutir (IEmbeddingGenerator).
 /// Qual implementação entra é decisão de configuração. Chat e embedding são independentes:
-/// dá para gerar com Groq e embutir com Ollama, por exemplo (Groq não oferece embeddings).
+/// dá para gerar com Groq e embutir com Ollama, por exemplo.
 /// </summary>
 internal static class Provedores
 {

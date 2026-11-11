@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
+  <PropertyGroup>
+    <!-- Chaves de API em desenvolvimento: dotnet user-secrets set "Ia:Chat:ChaveDeApi" "sk-..." -->
+    <UserSecretsId>dotnet-rag-documents</UserSecretsId>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\RagDocuments.Core\RagDocuments.Core.csproj" />
   </ItemGroup>
